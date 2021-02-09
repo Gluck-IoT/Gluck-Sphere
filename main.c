@@ -1,97 +1,59 @@
-#include <errno.h>
-#include <signal.h>
+﻿// This minimal Azure Sphere app repeatedly toggles an LED. Use this app to test that
+// installation of the device and SDK succeeded, and that you can build, deploy, and debug an app.
+
 #include <stdbool.h>
-#include <stdlib.h>
+#include <errno.h>
 #include <string.h>
-#include <sys/time.h>
 #include <time.h>
-#include <assert.h>
 
 #include <applibs/log.h>
 #include <applibs/gpio.h>
-#include <applibs/eventloop.h>
-#include <applibs/sysevent.h>
-#include <applibs/powermanagement.h>
-#include <applibs/storage.h>
-#include <applibs/networking.h>
 
-#include <hw/sample_appliance.h>
-#include "eventloop_timer_utilities.h"
+// The following #include imports a "template appliance" definition. This app comes with multiple
+// implementations of the template appliance, each in a separate directory, which allow the code
+// to run unchanged on different hardware.
+//
+// By default, this app targets hardware that follows the MT3620 Reference Development Board (RDB)
+// specification, such as the MT3620 Dev Kit from Seeed Studio.
+//
+// To target different hardware, you'll need to update CMakeLists.txt.  For example, to target the
+// Avnet MT3620 Starter Kit, make this update: azsphere_target_hardware_definition(${PROJECT_NAME}
+// TARGET_DIRECTORY "HardwareDefinitions/avnet_mt3620_sk" TARGET_DEFINITION
+// "template_appliance.json")
+//
+// See https://aka.ms/AzureSphereHardwareDefinitions for more details.
+#include <hw/template_appliance.h>
 
 /// <summary>
-/// Termination codes for this application. These are used for the
+/// Exit codes for this application. These are used for the
 /// application exit code. They must all be between zero and 255,
 /// where zero is reserved for successful termination.
 /// </summary>
 typedef enum {
     ExitCode_Success = 0,
 
-    ExitCode_TermHandler_SigTerm = 1,
-
-    ExitCode_LedTimer_Consume = 2,
-    ExitCode_LedTimer_SetLedState = 3,
-
-    ExitCode_ButtonTimer_Consume = 4,
-    ExitCode_ButtonTimer_GetButtonState = 5,
-    ExitCode_ButtonTimer_SetBlinkPeriod = 6,
-
-    ExitCode_Init_EventLoop = 7,
-    ExitCode_Init_Button = 8,
-    ExitCode_Init_ButtonPollTimer = 9,
-    ExitCode_Init_Led = 10,
-    ExitCode_Init_LedBlinkTimer = 11,
-    ExitCode_Main_EventLoopFail = 12
+    ExitCode_Main_Led = 1
 } ExitCode;
 
-/// <summary>
-///     Handle LED timer event: blink LED.
-/// </summary>
-static void BlinkingLedTimerEventHandler(EventLoopTimer* timer)
+int main(void)
 {
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_LedTimer_Consume;
-        return;
+    Log_Debug(
+        "\nVisit https://github.com/Azure/azure-sphere-samples for extensible samples to use as a "
+        "starting point for full applications.\n");
+
+    int fd = GPIO_OpenAsOutput(TEMPLATE_LED, GPIO_OutputMode_PushPull, GPIO_Value_High);
+    if (fd < 0) {
+        Log_Debug(
+            "Error opening GPIO: %s (%d). Check that app_manifest.json includes the GPIO used.\n",
+            strerror(errno), errno);
+        return ExitCode_Main_Led;
     }
 
-    // The blink interval has elapsed, so toggle the LED state
-    // The LED is active-low so GPIO_Value_Low is on and GPIO_Value_High is off
-    ledState = (ledState == GPIO_Value_Low ? GPIO_Value_High : GPIO_Value_Low);
-    int result = GPIO_SetValue(blinkingLedGpioFd, ledState);
-    if (result != 0) {
-        Log_Debug("ERROR: Could not set LED output value: %s (%d).\n", strerror(errno), errno);
-        exitCode = ExitCode_LedTimer_SetLedState;
-        return;
-    }
-}
-
-/// <summary>
-///     Handle button timer event: if the button is pressed, change the LED blink rate.
-/// </summary>
-static void ButtonTimerEventHandler(EventLoopTimer* timer)
-{
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_ButtonTimer_Consume;
-        return;
-    }
-
-    // Check for a button press
-    GPIO_Value_Type newButtonState;
-    int result = GPIO_GetValue(ledBlinkRateButtonGpioFd, &newButtonState);
-    if (result != 0) {
-        Log_Debug("ERROR: Could not read button GPIO: %s (%d).\n", strerror(errno), errno);
-        exitCode = ExitCode_ButtonTimer_GetButtonState;
-        return;
-    }
-
-    // If the button has just been pressed, change the LED blink interval
-    // The button has GPIO_Value_Low when pressed and GPIO_Value_High when released
-    if (newButtonState != buttonState) {
-        if (newButtonState == GPIO_Value_Low) {
-            blinkIntervalIndex = (blinkIntervalIndex + 1) % numBlinkIntervals;
-            if (SetEventLoopTimerPeriod(blinkTimer, &blinkIntervals[blinkIntervalIndex]) != 0) {
-                exitCode = ExitCode_ButtonTimer_SetBlinkPeriod;
-            }
-        }
-        buttonState = newButtonState;
+    const struct timespec sleepTime = {.tv_sec = 1, .tv_nsec = 0};
+    while (true) {
+        GPIO_SetValue(fd, GPIO_Value_Low);
+        nanosleep(&sleepTime, NULL);
+        GPIO_SetValue(fd, GPIO_Value_High);
+        nanosleep(&sleepTime, NULL);
     }
 }

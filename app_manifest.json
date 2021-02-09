@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 1,
+  "Name": "AzureSphereBlink1",
+  "ComponentId": "591504b5-4750-4f93-a3e0-ecc2f76aa86b",
+  "EntryPoint": "/bin/app",
+  "CmdArgs": [],
+  "Capabilities": {
+    "Gpio": [ "$TEMPLATE_LED" ],
+    "AllowedApplicationConnections": []
+  },
+  "ApplicationType": "Default"
+}
