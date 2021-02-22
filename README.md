@@ -17,7 +17,7 @@ This app performs the following tasks:
 
 - Receive command data from Azure Sphere, and transmit it to the
 
-#' Capabilities
+## Capabilities
 This app uses the following capabilities:
 
 - ?
