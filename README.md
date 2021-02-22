@@ -3,7 +3,7 @@ Gluck runs on two operating systems: Azure Sphere, which is able to communicate 
 
 This repository contains the code for the Azure Sphere app.
 
-# What is Azure Sphere?
+## What is Azure Sphere?
 [Azure Sphere](https://azure.microsoft.com/en-gb/services/azure-sphere/ "Azure Sphere") is a comprehensive security package for IoT devices. It consists of a microcontroller running a specialised Linux-based operating system, and a cloud service which handles certificate authentication, updates and device management.
 
 An Azure Sphere microcontroller can run apps in real time or on the Azure Sphere operating system: only those on Azure Sphere are allowed to connect to the internet.
@@ -12,14 +12,14 @@ The Azure Sphere OS connects to the Azure Sphere Security Service, from which it
 
 More information about Azure Sphere can be found [here](https://docs.microsoft.com/en-us/azure-sphere/product-overview/what-is-azure-sphere "What is Azure Sphere?").
 
-# Functionality
+## Functionality
 This app performs the following tasks:
 
 - Receive sensor data from Azure RTOS, and transmit it to Azure Sphere (where it can be processed by an IoT server) every 5 seconds
 
 - Receive command data from Azure Sphere, and transmit it to the
 
-# Capabilities
+#' Capabilities
 This app uses the following capabilities:
 
 - ?
