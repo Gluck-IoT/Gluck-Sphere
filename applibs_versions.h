@@ -1,9 +1,12 @@
-﻿#pragma once
+﻿/* Copyright (c) Microsoft Corporation. All rights reserved.
+   Licensed under the MIT License. */
 
-/// <summary>
-/// This identifier should be defined before including any of the networking-related header files.
-/// It indicates which version of the Wi-Fi data structures the application uses.
-/// </summary>
+#pragma once
+
+   /// <summary>
+   /// This identifier should be defined before including any of the networking-related header files.
+   /// It indicates which version of the Wi-Fi data structures the application uses.
+   /// </summary>
 #define NETWORKING_STRUCTS_VERSION 1
 
 /// <summary>
