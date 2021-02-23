@@ -1,7 +1,7 @@
 {
   "SchemaVersion": 1,
   "Name": "Gluck",
-  "ComponentId": "0066962f-7757-4716-8398-df8943c9a6e9",
+  "ComponentId": "e8b60e54-a71a-4bbd-93c0-0a500a1224f5",
   "EntryPoint": "/bin/app",
   "CmdArgs": [ "--ConnectionType", "DPS", "--ScopeID", "0ne0021B284" ],
   "Capabilities": {
@@ -15,7 +15,7 @@
     ],
     "SystemEventNotifications": true,
     "MutableStorage": { "SizeKB": 8 },
-    "AllowedApplicationConnections": [],
+    "AllowedApplicationConnections": [ "0066962f-7757-4716-8398-df8943c9a6e9" ],
     "WifiConfig": true
   },
   "ApplicationType": "Default"

@@ -13,7 +13,7 @@
       "workingDirectory": "${workspaceRoot}",
       "applicationPath": "${debugInfo.target}",
       "imagePath": "${debugInfo.targetImage}",
-      "partnerComponents": []
+      "partnerComponents": [ "0066962f-7757-4716-8398-df8943c9a6e9" ]
     }
   ]
 }
