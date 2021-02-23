@@ -1,6 +1,3 @@
-/* Copyright (c) Microsoft Corporation. All rights reserved.
-   Licensed under the MIT License. */
-
 #pragma once
 #include <time.h>
 
@@ -8,11 +5,11 @@
 
 #include <applibs/eventloop.h>
 
-   /// <summary>
-   /// Opaque handle. Obtain via <see cref="CreateEventLoopPeriodicTimer" />
-   /// or <see cref="CreateEventLoopDisarmedTimer" /> and dispose of via
-   /// <see cref="DisposeEventLoopTimer" />.
-   /// </summary>
+/// <summary>
+/// Opaque handle. Obtain via <see cref="CreateEventLoopPeriodicTimer" />
+/// or <see cref="CreateEventLoopDisarmedTimer" /> and dispose of via
+/// <see cref="DisposeEventLoopTimer" />.
+/// </summary>
 typedef struct EventLoopTimer EventLoopTimer;
 
 /// <summary>
