@@ -9,8 +9,36 @@ azsphere_configure_tools(TOOLS_REVISION "21.01")
 azsphere_configure_api(TARGET_API_SET "8")
 
 # Create executable
-add_executable (${PROJECT_NAME} main.c "eventloop_timer_utilities.c")
-target_link_libraries (${PROJECT_NAME} applibs pthread gcc_s c)
-azsphere_target_hardware_definition(${PROJECT_NAME} TARGET_DIRECTORY "HardwareDefinitions/avnet_mt3620_sk" TARGET_DEFINITION "template_appliance.json")
+add_executable (${PROJECT_NAME} main.c eventloop_timer_utilities.c parson.c)
+target_include_directories(${PROJECT_NAME} PUBLIC ${AZURE_SPHERE_API_SET_DIR}/usr/include/azureiot 
+                           ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_prov_client 
+                           ${AZURE_SPHERE_API_SET_DIR}/usr/include/azure_c_shared_utility)
+target_link_libraries (${PROJECT_NAME} m azureiot applibs pthread gcc_s c)
+
+# Target hardware for the sample.
+set(TARGET_HARDWARE "avnet_mt3620_sk")
+set(TARGET_DEFINITION "sample_appliance.json")
+
+find_path(
+    TARGET_DIRECTORY
+    NAMES ${TARGET_DEFINITION}
+    PATHS "HardwareDefinitions/avnet_mt3620_sk"
+    NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+
+azsphere_target_hardware_definition(${PROJECT_NAME} TARGET_DIRECTORY "${TARGET_DIRECTORY}" TARGET_DEFINITION "${TARGET_DEFINITION}")
+
+if (POWERSHELL)
+    # Run validate_manifest script during build
+    add_custom_target(ValidateManifest ALL
+        COMMAND ${POWERSHELL} -ExecutionPolicy Bypass -NoProfile -NonInteractive -File ${CMAKE_SOURCE_DIR}/script/validate_manifest.ps1
+        DEPENDS ${CMAKE_SOURCE_DIR}/app_manifest.json)
+else()
+    # Warn users without PowerShell to update their manifest
+    add_custom_target(ValidateManifest ALL
+        COMMAND echo "Please ensure that you have updated app_manifest.json as described in IoTCentral.md or IoTHub.md, as appropriate."
+        DEPENDS ${CMAKE_SOURCE_DIR}/app_manifest.json)
+endif()
+
+add_dependencies(ValidateManifest ${PROJECT_NAME})
 
 azsphere_target_add_image_package(${PROJECT_NAME})

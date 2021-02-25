@@ -19,7 +19,7 @@
 // "template_appliance.json")
 //
 // See https://aka.ms/AzureSphereHardwareDefinitions for more details.
-#include <hw/template_appliance.h>
+#include "HardwareDefinitions/avnet_mt3620_sk/inc/hw/sample_appliance.h"
 
 // Event codes for the application. These are used for the
 // application exit code, and must be between 0 and 255 inclusive,
@@ -49,10 +49,12 @@ static const char rtAppComponentId[] = "e8b60e54-a71a-4bbd-93c0-0a500a1224f5";
 
 static void TerminationHandler(int signalNumber);
 static void SendTimerEventHandler(EventLoopTimer* timer);
-static void SendMessageToRTApp(void);
+static void SendMessageToRTApp(int amount_insulin);
 static void SocketEventHandler(EventLoop* el, int fd, EventLoop_IoEvents events, void* context);
 static ExitCode InitHandlers(void);
 static void CloseHandlers(void);
+
+static int insulinToInject;
 
 /// <summary>
 ///     Signal handler for termination requests. This handler must be async-signal-safe.
@@ -73,7 +75,7 @@ static void SendTimerEventHandler(EventLoopTimer* timer)
         return;
     }
 
-    SendMessageToRTApp();
+    SendMessageToRTApp(0);
 }
 
 // Send message to real-time capable application
@@ -167,23 +169,17 @@ static ExitCode InitHandlers(void)
 
 int main(void)
 {
-    Log_Debug(
-        "\nVisit https://github.com/Azure/azure-sphere-samples for extensible samples to use as a "
-        "starting point for full applications.\n");
+    Log_Debug(Log_Debug("High-level app started.\n")
 
-    int fd = GPIO_OpenAsOutput(TEMPLATE_LED, GPIO_OutputMode_PushPull, GPIO_Value_High);
-    if (fd < 0) {
-        Log_Debug(
-            "Error opening GPIO: %s (%d). Check that app_manifest.json includes the GPIO used.\n",
-            strerror(errno), errno);
-        return ExitCode_Main_Led;
+    while (exitCode == ExitCode_Success) {
+        EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
+        // Continue if interrupted by signal, e.g. due to breakpoint being set.
+        if (result == EventLoop_Run_Failed && errno != EINTR) {
+            exitCode = ExitCode_Main_EventLoopFail;
+        }
     }
 
-    const struct timespec sleepTime = {.tv_sec = 1, .tv_nsec = 0};
-    while (true) {
-        GPIO_SetValue(fd, GPIO_Value_Low);
-        nanosleep(&sleepTime, NULL);
-        GPIO_SetValue(fd, GPIO_Value_High);
-        nanosleep(&sleepTime, NULL);
-    }
+    CloseHandlers();
+    Log_Debug("Application exiting.\n");
+    return exitCode;
 }
