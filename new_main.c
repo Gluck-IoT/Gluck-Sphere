@@ -108,6 +108,15 @@ typedef enum {
     ExitCode_IoTEdgeRootCa_FileRead_Failed = 21,
 
     ExitCode_PayloadSize_TooLarge = 22,
+
+    ExitCode_AdcTimerHandler_Consume = 23,
+    ExitCode_AdcTimerHandler_Poll = 24,
+
+    ExitCode_Init_AdcOpen = 25,
+    ExitCode_Init_GetBitCount = 26,
+    ExitCode_Init_UnexpectedBitCount = 27,
+    ExitCode_Init_SetRefVoltage = 28,
+    ExitCode_Init_AdcPollTimer = 29
 } ExitCode;
 
 static volatile sig_atomic_t exitCode = ExitCode_Success;
@@ -173,6 +182,7 @@ static void SendSimulatedTelemetry(void);
 static void ButtonPollTimerEventHandler(EventLoopTimer* timer);
 static bool IsButtonPressed(int fd, GPIO_Value_Type* oldState);
 static void AzureTimerEventHandler(EventLoopTimer* timer);
+static void AdcPollingEventHandler(EventLoopTimer* timer);
 static ExitCode ValidateUserConfiguration(void);
 static void ParseCommandLineArguments(int argc, char* argv[]);
 static bool SetUpAzureIoTHubClientWithDaa(void);
@@ -210,6 +220,13 @@ static int telemetryCount = 0;
 static GPIO_Value_Type sendMessageButtonState = GPIO_Value_High;
 static bool statusLedOn = false;
 
+// The size of a sample in bits
+static int sampleBitCount = -1;
+
+// The maximum voltage
+static float sampleMaxVoltage = 2.5f;
+
+
 // Usage text for command line arguments in application manifest.
 static const char* cmdLineArgsUsageText =
 "DPS connection type: \" CmdArgs \": [\"--ConnectionType\", \"DPS\", \"--ScopeID\", "
@@ -234,7 +251,7 @@ static void TerminationHandler(int signalNumber)
 /// </summary>
 int main(int argc, char* argv[])
 {
-    Log_Debug("Azure IoT Application starting.\n");
+    Log_Debug("Gluck IoT device started.\n");
 
     bool isNetworkingReady = false;
     if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady) {
@@ -326,6 +343,29 @@ static void AzureTimerEventHandler(EventLoopTimer* timer)
     if (iothubClientHandle != NULL) {
         IoTHubDeviceClient_LL_DoWork(iothubClientHandle);
     }
+}
+
+/// <summary>
+///     Handle polling timer event: takes a single reading from ADC channelId,
+///     every second, outputting the result.
+/// </summary>
+static void AdcPollingEventHandler(EventLoopTimer* timer)
+{
+    if (ConsumeEventLoopTimerEvent(timer) != 0) {
+        exitCode = ExitCode_AdcTimerHandler_Consume;
+        return;
+    }
+
+    uint32_t value;
+    int result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
+    if (result == -1) {
+        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
+        exitCode = ExitCode_AdcTimerHandler_Poll;
+        return;
+    }
+
+    float voltage = ((float)value * sampleMaxVoltage) / (float)((1 << sampleBitCount) - 1);
+    Log_Debug("The out sample value is %.3f V\n", voltage);
 }
 
 /// <summary>
@@ -473,6 +513,38 @@ static ExitCode InitPeripheralsAndHandlers(void)
         return ExitCode_Init_TwinStatusLed;
     }
 
+    // Open the ADC controller
+    adcControllerFd = ADC_Open(SAMPLE_POTENTIOMETER_ADC_CONTROLLER);
+    if (adcControllerFd == -1) {
+        Log_Debug("ADC_Open failed with error: %s (%d)\n", strerror(errno), errno);
+        return ExitCode_Init_AdcOpen;
+    }
+
+    // Get the sample bit count for the ADC controller
+    sampleBitCount = ADC_GetSampleBitCount(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL);
+    if (sampleBitCount == -1) {
+        Log_Debug("ADC_GetSampleBitCount failed with error : %s (%d)\n", strerror(errno), errno);
+        return ExitCode_Init_GetBitCount;
+    }
+    if (sampleBitCount == 0) {
+        Log_Debug("ADC_GetSampleBitCount returned sample size of 0 bits.\n");
+        return ExitCode_Init_UnexpectedBitCount;
+    }
+
+    int result = ADC_SetReferenceVoltage(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL,
+        sampleMaxVoltage);
+    if (result == -1) {
+        Log_Debug("ADC_SetReferenceVoltage failed with error : %s (%d)\n", strerror(errno), errno);
+        return ExitCode_Init_SetRefVoltage;
+    }
+    
+    struct timespec adcCheckPeriod = { .tv_sec = 1, .tv_nsec = 0 };
+    adcPollTimer =
+        CreateEventLoopPeriodicTimer(eventLoop, &AdcPollingEventHandler, &adcCheckPeriod);
+    if (adcPollTimer == NULL) {
+        return ExitCode_Init_AdcPollTimer;
+    }
+
     // Set up a timer to poll for button events.
     static const struct timespec buttonPressCheckPeriod = { .tv_sec = 0, .tv_nsec = 1000 * 1000 };
     buttonPollTimer = CreateEventLoopPeriodicTimer(eventLoop, &ButtonPollTimerEventHandler,
@@ -513,6 +585,7 @@ static void CloseFdAndPrintError(int fd, const char* fdName)
 static void ClosePeripheralsAndHandlers(void)
 {
     DisposeEventLoopTimer(buttonPollTimer);
+    DisposeEventLoopTimer(adcPollTimer);
     DisposeEventLoopTimer(azureTimer);
     EventLoop_Close(eventLoop);
 
@@ -524,6 +597,7 @@ static void ClosePeripheralsAndHandlers(void)
     }
 
     CloseFdAndPrintError(sendMessageButtonGpioFd, "SendMessageButton");
+    CloseFdAndPrintError(adcControllerFd, "ADC");
     CloseFdAndPrintError(deviceTwinStatusLedGpioFd, "StatusLed");
 }
 
@@ -943,11 +1017,18 @@ static void ReportedStateCallback(int result, void* context)
 void SendSimulatedTelemetry(void)
 {
     static char telemetryBuffer[TELEMETRY_BUFFER_SIZE];
+    static float glucose_level = 0;
 
-    // Generate a simulated temperature.
-    static float temperature = 50.0f;                    // starting temperature
-    float delta = ((float)(rand() % 41)) / 20.0f - 1.0f; // between -1.0 and +1.0
-    temperature += delta;
+    int value, result;
+    result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
+    if (result == -1) {
+        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
+        exitCode = ExitCode_AdcTimerHandler_Poll;
+        return;
+    }
+
+    glucose_level = ((float) value * sampleMaxVoltage) / (float) ((1 << sampleBitCount) - 1);
+    Log_Debug("Read glucose value: %.3f mg/dL\n", glucose_level);
 
     int len =
         snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Temperature\":%3.2f}", temperature);
