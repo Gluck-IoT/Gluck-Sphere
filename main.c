@@ -775,13 +775,13 @@ static int DeviceMethodCallback(const char* methodName, const unsigned char* pay
     }
     else if (strcmp("InjectInsulin", methodName) == 0) {
         // Output insulin injection using log debug
-        Log_Debug("  ----- Injecting insulin -----\n");
+        int intPayload = atoi(payload);
+        Log_Debug("Injecting %d mg insulin\n", intPayload);
         responseString = "\"Injecting insulin\""; // must be a JSON string (in quotes)
-        result = 200;
-        // TODO
+
         GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_High);
         CreateEventLoopDisarmedTimer(insulinToInject, InsulinTimerEventHandler);
-        SetEventLoopTimerOneShot(insulinToInject, 1000);
+        SetEventLoopTimerOneShot(insulinToInject, intPayload);
     }
     else {
         // All other method names are ignored
