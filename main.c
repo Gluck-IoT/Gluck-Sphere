@@ -37,6 +37,7 @@
 // applibs_versions.h defines the API struct versions to use for applibs APIs.
 #include "applibs_versions.h"
 #include <applibs/eventloop.h>
+#include <applibs/adc.h>
 #include <applibs/gpio.h>
 #include <applibs/log.h>
 #include <applibs/networking.h>
@@ -199,13 +200,21 @@ static void ClosePeripheralsAndHandlers(void);
 // Button
 static int sendMessageButtonGpioFd = -1;
 
+// ADC
+static int adcControllerFd = -1;
+
+// Pump
+static int deviceStatusPumpGpioFd = -1;
+
 // LED
 static int deviceTwinStatusLedGpioFd = -1;
 
 // Timer / polling
 static EventLoop* eventLoop = NULL;
 static EventLoopTimer* buttonPollTimer = NULL;
+static EventLoopTimer* adcPollTimer = NULL;
 static EventLoopTimer* azureTimer = NULL;
+static EventLoopTimer* insulinToInject = NULL;
 
 // Azure IoT poll periods
 static const int AzureIoTDefaultPollPeriodSeconds = 1;        // poll azure iot every second
@@ -220,11 +229,15 @@ static int telemetryCount = 0;
 static GPIO_Value_Type sendMessageButtonState = GPIO_Value_High;
 static bool statusLedOn = false;
 
+static float voltage = 0;
+
 // The size of a sample in bits
 static int sampleBitCount = -1;
 
 // The maximum voltage
 static float sampleMaxVoltage = 2.5f;
+
+#define PumpOutputPin SAMPLE_NRF52_UART
 
 
 // Usage text for command line arguments in application manifest.
@@ -244,50 +257,6 @@ static void TerminationHandler(int signalNumber)
 {
     // Don't use Log_Debug here, as it is not guaranteed to be async-signal-safe.
     exitCode = ExitCode_TermHandler_SigTerm;
-}
-
-/// <summary>
-///     Main entry point for this sample.
-/// </summary>
-int main(int argc, char* argv[])
-{
-    Log_Debug("Gluck IoT device started.\n");
-
-    bool isNetworkingReady = false;
-    if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady) {
-        Log_Debug("WARNING: Network is not ready. Device cannot connect until network is ready.\n");
-    }
-
-    ParseCommandLineArguments(argc, argv);
-
-    exitCode = ValidateUserConfiguration();
-    if (exitCode != ExitCode_Success) {
-        return exitCode;
-    }
-
-    if (connectionType == ConnectionType_IoTEdge) {
-        exitCode = ReadIoTEdgeCaCertContent();
-        if (exitCode != ExitCode_Success) {
-            return exitCode;
-        }
-    }
-
-    exitCode = InitPeripheralsAndHandlers();
-
-    // Main loop
-    while (exitCode == ExitCode_Success) {
-        EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
-        // Continue if interrupted by signal, e.g. due to breakpoint being set.
-        if (result == EventLoop_Run_Failed && errno != EINTR) {
-            exitCode = ExitCode_Main_EventLoopFail;
-        }
-    }
-
-    ClosePeripheralsAndHandlers();
-
-    Log_Debug("Application exiting.\n");
-
-    return exitCode;
 }
 
 /// <summary>
@@ -346,6 +315,21 @@ static void AzureTimerEventHandler(EventLoopTimer* timer)
 }
 
 /// <summary>
+///     Insulin timer event:  Check the status of the button
+/// </summary>
+static void InsulinTimerEventHandler(EventLoopTimer* timer)
+{
+    if (ConsumeEventLoopTimerEvent(timer) != 0) {
+        exitCode = ExitCode_AzureTimer_Consume;
+        return;
+    }
+
+    // Switch off the pump after it has injected enough insulin
+    GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_Low);
+    return;
+}
+
+/// <summary>
 ///     Handle polling timer event: takes a single reading from ADC channelId,
 ///     every second, outputting the result.
 /// </summary>
@@ -364,8 +348,7 @@ static void AdcPollingEventHandler(EventLoopTimer* timer)
         return;
     }
 
-    float voltage = ((float)value * sampleMaxVoltage) / (float)((1 << sampleBitCount) - 1);
-    Log_Debug("The out sample value is %.3f V\n", voltage);
+    voltage = ((float) value * sampleMaxVoltage) / (float) ((1 << sampleBitCount) - 1);
 }
 
 /// <summary>
@@ -504,6 +487,15 @@ static ExitCode InitPeripheralsAndHandlers(void)
         return ExitCode_Init_MessageButton;
     }
 
+    // Open the pins which will be used for the insulin pump
+    Log_Debug("Opening pin for insulin pump as output.\n");
+    deviceStatusPumpGpioFd =
+        GPIO_OpenAsOutput(PumpOutputPin, GPIO_OutputMode_OpenSource, GPIO_Value_Low);
+    if (deviceStatusPumpGpioFd == -1) {
+        Log_Debug("ERROR: Could not open SAMPLE_LED: %s (%d).\n", strerror(errno), errno);
+        return ExitCode_Init_TwinStatusLed;
+    }
+
     // SAMPLE_LED is used to show Device Twin settings state
     Log_Debug("Opening SAMPLE_LED as output.\n");
     deviceTwinStatusLedGpioFd =
@@ -586,6 +578,7 @@ static void ClosePeripheralsAndHandlers(void)
 {
     DisposeEventLoopTimer(buttonPollTimer);
     DisposeEventLoopTimer(adcPollTimer);
+    DisposeEventLoopTimer(insulinToInject);
     DisposeEventLoopTimer(azureTimer);
     EventLoop_Close(eventLoop);
 
@@ -598,6 +591,7 @@ static void ClosePeripheralsAndHandlers(void)
 
     CloseFdAndPrintError(sendMessageButtonGpioFd, "SendMessageButton");
     CloseFdAndPrintError(adcControllerFd, "ADC");
+    CloseFdAndPrintError(deviceStatusPumpGpioFd, "Pump");
     CloseFdAndPrintError(deviceTwinStatusLedGpioFd, "StatusLed");
 }
 
@@ -778,6 +772,16 @@ static int DeviceMethodCallback(const char* methodName, const unsigned char* pay
         Log_Debug("  ----- ALARM TRIGGERED! -----\n");
         responseString = "\"Alarm Triggered\""; // must be a JSON string (in quotes)
         result = 200;
+    }
+    else if (strcmp("InjectInsulin", methodName) == 0) {
+        // Output insulin injection using log debug
+        Log_Debug("  ----- Injecting insulin -----\n");
+        responseString = "\"Injecting insulin\""; // must be a JSON string (in quotes)
+        result = 200;
+        // TODO
+        GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_High);
+        CreateEventLoopDisarmedTimer(insulinToInject, InsulinTimerEventHandler);
+        SetEventLoopTimerOneShot(insulinToInject, 1000);
     }
     else {
         // All other method names are ignored
@@ -1019,19 +1023,10 @@ void SendSimulatedTelemetry(void)
     static char telemetryBuffer[TELEMETRY_BUFFER_SIZE];
     static float glucose_level = 0;
 
-    int value, result;
-    result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
-    if (result == -1) {
-        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
-        exitCode = ExitCode_AdcTimerHandler_Poll;
-        return;
-    }
-
-    glucose_level = ((float) value * sampleMaxVoltage) / (float) ((1 << sampleBitCount) - 1);
-    Log_Debug("Read glucose value: %.3f mg/dL\n", glucose_level);
+    Log_Debug("Read glucose value: %.3f mg/dL\n", voltage);
 
     int len =
-        snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Temperature\":%3.2f}", temperature);
+        snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Glucose\":%3.2f}", voltage);
     if (len < 0 || len >= TELEMETRY_BUFFER_SIZE) {
         Log_Debug("ERROR: Cannot write telemetry to buffer.\n");
         return;
@@ -1122,4 +1117,48 @@ static ExitCode ReadIoTEdgeCaCertContent(void)
 
     close(certFd);
     return ExitCode_Success;
+}
+
+/// <summary>
+///     Main entry point for this sample.
+/// </summary>
+int main(int argc, char* argv[])
+{
+    Log_Debug("Gluck IoT device started.\n");
+
+    bool isNetworkingReady = false;
+    if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady) {
+        Log_Debug("WARNING: Network is not ready. Device cannot connect until network is ready.\n");
+    }
+
+    ParseCommandLineArguments(argc, argv);
+
+    exitCode = ValidateUserConfiguration();
+    if (exitCode != ExitCode_Success) {
+        return exitCode;
+    }
+
+    if (connectionType == ConnectionType_IoTEdge) {
+        exitCode = ReadIoTEdgeCaCertContent();
+        if (exitCode != ExitCode_Success) {
+            return exitCode;
+        }
+    }
+
+    exitCode = InitPeripheralsAndHandlers();
+
+    // Main loop
+    while (exitCode == ExitCode_Success) {
+        EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
+        // Continue if interrupted by signal, e.g. due to breakpoint being set.
+        if (result == EventLoop_Run_Failed && errno != EINTR) {
+            exitCode = ExitCode_Main_EventLoopFail;
+        }
+    }
+
+    ClosePeripheralsAndHandlers();
+
+    Log_Debug("Application exiting.\n");
+
+    return exitCode;
 }
