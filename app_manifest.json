@@ -13,6 +13,7 @@
       "$SAMPLE_RGBLED_GREEN",
       "$SAMPLE_RGBLED_BLUE"
     ],
+    "Uart": [ "$SAMPLE_NRF52_UART" ],
     "SystemEventNotifications": true,
     "MutableStorage": { "SizeKB": 8 },
     "AllowedApplicationConnections": [ "0066962f-7757-4716-8398-df8943c9a6e9" ],
