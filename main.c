@@ -1,29 +1,8 @@
-/* Copyright (c) Microsoft Corporation. All rights reserved.
+/* Copyright (c) Group Romeo 2021. All rights reserved.
    Licensed under the MIT License. */
 
-   // This sample C application demonstrates how to interface Azure Sphere devices with Azure IoT
-   // services. Using the Azure IoT SDK C APIs, it shows how to:
-   // 1. Use Device Provisioning Service (DPS) to connect to Azure IoT Hub/Central with
-   // certificate-based authentication
-   // 2. Use X.509 Certificate Authority (CA) certificates to authenticate devices connecting directly
-   // to Azure IoT Hub
-   // 3. Use X.509 Certificate Authority (CA) certificates to authenticate devices connecting to an
-   // IoT Edge device.
-   // 4. Use Azure IoT Hub messaging to upload simulated temperature measurements and to signal button
-   // press events
-   // 5. Use Device Twin to receive desired LED state from the Azure IoT Hub
-   // 6. Use Direct Methods to receive a "Trigger Alarm" command from Azure IoT Hub/Central
-   //
-   // It uses the following Azure Sphere libraries:
-   // - eventloop (system invokes handlers for timer events)
-   // - gpio (digital input for button, digital output for LED)
-   // - log (displays messages in the Device Output window during debugging)
-   // - networking (network interface connection status)
-   // - storage (device storage interaction)
-   //
-   // You will need to provide information in the 'CmdArgs' section of the application manifest to
-   // use this application. Please see README.md for full details.
-
+#ifndef HWFUNCTIONS
+#define HWFUNCTIONS
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
@@ -34,7 +13,6 @@
 #include <string.h>
 #include <unistd.h>
 
-// applibs_versions.h defines the API struct versions to use for applibs APIs.
 #include "applibs_versions.h"
 #include <applibs/eventloop.h>
 #include <applibs/adc.h>
@@ -42,25 +20,17 @@
 #include <applibs/log.h>
 #include <applibs/networking.h>
 #include <applibs/storage.h>
+#endif
 
-// The following #include imports a "sample appliance" definition. This app comes with multiple
-// implementations of the sample appliance, each in a separate directory, which allow the code to
-// run on different hardware.
-//
-// By default, this app targets hardware that follows the MT3620 Reference Development Board (RDB)
-// specification, such as the MT3620 Dev Kit from Seeed Studio.
-//
-// To target different hardware, you'll need to update CMakeLists.txt. For example, to target the
-// Avnet MT3620 Starter Kit, change the TARGET_HARDWARE variable to
-// "avnet_mt3620_sk".
-//
-// See https://aka.ms/AzureSphereHardwareDefinitions for more details.
+// Select the hardware to target for this program. To change the hardware, you'll need to update
+// CMakeLists.txt (see https://aka.ms/AzureSphereHardwareDefinitions for more details).
 #include <hw/sample_appliance.h>
 
+// Include header utilities
 #include "eventloop_timer_utilities.h"
-#include "parson.h" // Used to parse Device Twin messages.
+#include "parson.h"
 
-// Azure IoT SDK
+// Include the Azure IoT SDK
 #include <iothub_client_core_common.h>
 #include <iothub_device_client_ll.h>
 #include <iothub_client_options.h>
@@ -229,7 +199,7 @@ static int telemetryCount = 0;
 static GPIO_Value_Type sendMessageButtonState = GPIO_Value_High;
 static bool statusLedOn = false;
 
-static float voltage = 0;
+static float voltage = 5.0; // Default value for simulation purposes
 
 // The size of a sample in bits
 static int sampleBitCount = -1;
@@ -238,6 +208,14 @@ static int sampleBitCount = -1;
 static float sampleMaxVoltage = 2.5f;
 
 #define PumpOutputPin SAMPLE_NRF52_UART
+
+// Include different functions depending on whether the hardware is simulated
+#define SIMULATED 1
+#if SIMULATED == 1
+#include "hardwarefunctions_simulated.h"
+#else
+#include "hardwarefunctions.h"
+#endif
 
 
 // Usage text for command line arguments in application manifest.
@@ -250,20 +228,14 @@ static const char* cmdLineArgsUsageText =
 "\"--Hostname\", \"<iotedgedevice_hostname>\", \"--IoTEdgeRootCAPath\", "
 "\"certs/<iotedgedevice_cert_name>\"]\n";
 
-/// <summary>
-///     Signal handler for termination requests. This handler must be async-signal-safe.
-/// </summary>
-static void TerminationHandler(int signalNumber)
-{
+// Signal handler for termination requests. This handler must be async-signal-safe.
+static void TerminationHandler(int signalNumber) {
     // Don't use Log_Debug here, as it is not guaranteed to be async-signal-safe.
     exitCode = ExitCode_TermHandler_SigTerm;
 }
 
-/// <summary>
-///     Button timer event:  Check the status of the button
-/// </summary>
-static void ButtonPollTimerEventHandler(EventLoopTimer* timer)
-{
+// Button timer event: Check the status of the button.
+static void ButtonPollTimerEventHandler(EventLoopTimer* timer) {
     if (ConsumeEventLoopTimerEvent(timer) != 0) {
         exitCode = ExitCode_ButtonTimer_Consume;
         return;
@@ -274,11 +246,8 @@ static void ButtonPollTimerEventHandler(EventLoopTimer* timer)
     }
 }
 
-/// <summary>
-///     Azure timer event:  Check connection status and send telemetry
-/// </summary>
-static void AzureTimerEventHandler(EventLoopTimer* timer)
-{
+// Azure timer event:  Check connection status and send telemetry
+static void AzureTimerEventHandler(EventLoopTimer* timer) {
     if (ConsumeEventLoopTimerEvent(timer) != 0) {
         exitCode = ExitCode_AzureTimer_Consume;
         return;
@@ -314,48 +283,8 @@ static void AzureTimerEventHandler(EventLoopTimer* timer)
     }
 }
 
-/// <summary>
-///     Insulin timer event:  Check the status of the button
-/// </summary>
-static void InsulinTimerEventHandler(EventLoopTimer* timer)
-{
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_AzureTimer_Consume;
-        return;
-    }
-
-    // Switch off the pump after it has injected enough insulin
-    GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_Low);
-    return;
-}
-
-/// <summary>
-///     Handle polling timer event: takes a single reading from ADC channelId,
-///     every second, outputting the result.
-/// </summary>
-static void AdcPollingEventHandler(EventLoopTimer* timer)
-{
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_AdcTimerHandler_Consume;
-        return;
-    }
-
-    uint32_t value;
-    int result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
-    if (result == -1) {
-        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
-        exitCode = ExitCode_AdcTimerHandler_Poll;
-        return;
-    }
-
-    voltage = ((float) value * sampleMaxVoltage) / (float) ((1 << sampleBitCount) - 1);
-}
-
-/// <summary>
-///     Parse the command line arguments given in the application manifest.
-/// </summary>
-static void ParseCommandLineArguments(int argc, char* argv[])
-{
+// Parse the command line arguments given in the application manifest.
+static void ParseCommandLineArguments(int argc, char* argv[]) {
     int option = 0;
     static const struct option cmdLineOptions[] = {
         {.name = "ConnectionType", .has_arg = required_argument, .flag = NULL, .val = 'c'},
@@ -403,14 +332,10 @@ static void ParseCommandLineArguments(int argc, char* argv[])
     }
 }
 
-/// <summary>
-///     Validates if the values of the Connection type, Scope ID, IoT Hub or IoT Edge Hostname
-///  were set.
-/// </summary>
-/// <returns>ExitCode_Success if the parameters were provided; otherwise another
-/// ExitCode value which indicates the specific failure.</returns>
-static ExitCode ValidateUserConfiguration(void)
-{
+// Validate if the values of the Connection type, Scope ID, IoT Hub or IoT Edge Hostname
+// were set. Returns ExitCode_Success if the parameters were provided, or another ExitCode
+// value which indicates the specific failure.</returns>
+static ExitCode ValidateUserConfiguration(void) {
     ExitCode validationExitCode = ExitCode_Success;
 
     if (connectionType < ConnectionType_DPS || connectionType > ConnectionType_IoTEdge) {
@@ -459,110 +384,8 @@ static ExitCode ValidateUserConfiguration(void)
     return validationExitCode;
 }
 
-/// <summary>
-///     Set up SIGTERM termination handler, initialize peripherals, and set up event handlers.
-/// </summary>
-/// <returns>
-///     ExitCode_Success if all resources were allocated successfully; otherwise another
-///     ExitCode value which indicates the specific failure.
-/// </returns>
-static ExitCode InitPeripheralsAndHandlers(void)
-{
-    struct sigaction action;
-    memset(&action, 0, sizeof(struct sigaction));
-    action.sa_handler = TerminationHandler;
-    sigaction(SIGTERM, &action, NULL);
-
-    eventLoop = EventLoop_Create();
-    if (eventLoop == NULL) {
-        Log_Debug("Could not create event loop.\n");
-        return ExitCode_Init_EventLoop;
-    }
-
-    // Open SAMPLE_BUTTON_1 GPIO as input
-    Log_Debug("Opening SAMPLE_BUTTON_1 as input.\n");
-    sendMessageButtonGpioFd = GPIO_OpenAsInput(SAMPLE_BUTTON_1);
-    if (sendMessageButtonGpioFd == -1) {
-        Log_Debug("ERROR: Could not open SAMPLE_BUTTON_1: %s (%d).\n", strerror(errno), errno);
-        return ExitCode_Init_MessageButton;
-    }
-
-    // Open the pins which will be used for the insulin pump
-    Log_Debug("Opening pin for insulin pump as output.\n");
-    deviceStatusPumpGpioFd =
-        GPIO_OpenAsOutput(PumpOutputPin, GPIO_OutputMode_OpenSource, GPIO_Value_Low);
-    if (deviceStatusPumpGpioFd == -1) {
-        Log_Debug("ERROR: Could not open SAMPLE_LED: %s (%d).\n", strerror(errno), errno);
-        return ExitCode_Init_TwinStatusLed;
-    }
-
-    // SAMPLE_LED is used to show Device Twin settings state
-    Log_Debug("Opening SAMPLE_LED as output.\n");
-    deviceTwinStatusLedGpioFd =
-        GPIO_OpenAsOutput(SAMPLE_LED, GPIO_OutputMode_PushPull, GPIO_Value_High);
-    if (deviceTwinStatusLedGpioFd == -1) {
-        Log_Debug("ERROR: Could not open SAMPLE_LED: %s (%d).\n", strerror(errno), errno);
-        return ExitCode_Init_TwinStatusLed;
-    }
-
-    // Open the ADC controller
-    adcControllerFd = ADC_Open(SAMPLE_POTENTIOMETER_ADC_CONTROLLER);
-    if (adcControllerFd == -1) {
-        Log_Debug("ADC_Open failed with error: %s (%d)\n", strerror(errno), errno);
-        return ExitCode_Init_AdcOpen;
-    }
-
-    // Get the sample bit count for the ADC controller
-    sampleBitCount = ADC_GetSampleBitCount(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL);
-    if (sampleBitCount == -1) {
-        Log_Debug("ADC_GetSampleBitCount failed with error : %s (%d)\n", strerror(errno), errno);
-        return ExitCode_Init_GetBitCount;
-    }
-    if (sampleBitCount == 0) {
-        Log_Debug("ADC_GetSampleBitCount returned sample size of 0 bits.\n");
-        return ExitCode_Init_UnexpectedBitCount;
-    }
-
-    int result = ADC_SetReferenceVoltage(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL,
-        sampleMaxVoltage);
-    if (result == -1) {
-        Log_Debug("ADC_SetReferenceVoltage failed with error : %s (%d)\n", strerror(errno), errno);
-        return ExitCode_Init_SetRefVoltage;
-    }
-    
-    struct timespec adcCheckPeriod = { .tv_sec = 1, .tv_nsec = 0 };
-    adcPollTimer =
-        CreateEventLoopPeriodicTimer(eventLoop, &AdcPollingEventHandler, &adcCheckPeriod);
-    if (adcPollTimer == NULL) {
-        return ExitCode_Init_AdcPollTimer;
-    }
-
-    // Set up a timer to poll for button events.
-    static const struct timespec buttonPressCheckPeriod = { .tv_sec = 0, .tv_nsec = 1000 * 1000 };
-    buttonPollTimer = CreateEventLoopPeriodicTimer(eventLoop, &ButtonPollTimerEventHandler,
-        &buttonPressCheckPeriod);
-    if (buttonPollTimer == NULL) {
-        return ExitCode_Init_ButtonPollTimer;
-    }
-
-    azureIoTPollPeriodSeconds = AzureIoTDefaultPollPeriodSeconds;
-    struct timespec azureTelemetryPeriod = { .tv_sec = azureIoTPollPeriodSeconds, .tv_nsec = 0 };
-    azureTimer =
-        CreateEventLoopPeriodicTimer(eventLoop, &AzureTimerEventHandler, &azureTelemetryPeriod);
-    if (azureTimer == NULL) {
-        return ExitCode_Init_AzureTimer;
-    }
-
-    return ExitCode_Success;
-}
-
-/// <summary>
-///     Closes a file descriptor and prints an error on failure.
-/// </summary>
-/// <param name="fd">File descriptor to close</param>
-/// <param name="fdName">File descriptor name to use in error message</param>
-static void CloseFdAndPrintError(int fd, const char* fdName)
-{
+// Close a file descriptor and print an error on failure.
+static void CloseFdAndPrintError(int fd, const char* fdName) {
     if (fd >= 0) {
         int result = close(fd);
         if (result != 0) {
@@ -571,11 +394,8 @@ static void CloseFdAndPrintError(int fd, const char* fdName)
     }
 }
 
-/// <summary>
-///     Close peripherals and handlers.
-/// </summary>
-static void ClosePeripheralsAndHandlers(void)
-{
+// Close peripherals and handlers.
+static void ClosePeripheralsAndHandlers(void) {
     DisposeEventLoopTimer(buttonPollTimer);
     DisposeEventLoopTimer(adcPollTimer);
     DisposeEventLoopTimer(insulinToInject);
@@ -595,11 +415,9 @@ static void ClosePeripheralsAndHandlers(void)
     CloseFdAndPrintError(deviceTwinStatusLedGpioFd, "StatusLed");
 }
 
-/// <summary>
-///     Callback when the Azure IoT connection state changes.
-///     This can indicate that a new connection attempt has succeeded or failed.
-///     It can also indicate than an existing connection has expired due to SAS token expiry.
-/// </summary>
+// Callback when the Azure IoT connection state changes.
+// This can indicate that a new connection attempt has succeeded or failed.
+// It can also indicate than an existing connection has expired due to SAS token expiry.
 static void ConnectionStatusCallback(IOTHUB_CLIENT_CONNECTION_STATUS result,
     IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason,
     void* userContextCallback)
@@ -617,13 +435,10 @@ static void ConnectionStatusCallback(IOTHUB_CLIENT_CONNECTION_STATUS result,
     TwinReportState("{\"manufacturer\":\"Microsoft\",\"model\":\"Azure Sphere Sample Device\"}");
 }
 
-/// <summary>
-///     Sets up the Azure IoT Hub connection (creates the iothubClientHandle)
-///     When the SAS Token for a device expires the connection needs to be recreated
-///     which is why this is not simply a one time call.
-/// </summary>
-static void SetUpAzureIoTHubClient(void)
-{
+// Set up the Azure IoT Hub connection (creates the iothubClientHandle)
+// When the SAS Token for a device expires the connection needs to be recreated
+// which is why this is not simply a one time call.
+static void SetUpAzureIoTHubClient(void) {
     bool isClientSetupSuccessful = false;
 
     if (iothubClientHandle != NULL) {
@@ -675,12 +490,8 @@ static void SetUpAzureIoTHubClient(void)
         NULL);
 }
 
-/// <summary>
-///     Sets up the Azure IoT Hub connection (creates the iothubClientHandle)
-///     with DAA
-/// </summary>
-static bool SetUpAzureIoTHubClientWithDaa(void)
-{
+// Set up the Azure IoT Hub connection (creating the iothubClientHandle) with DAA
+static bool SetUpAzureIoTHubClientWithDaa(void) {
     bool retVal = true;
 
     // Set up auth type
@@ -700,7 +511,7 @@ static bool SetUpAzureIoTHubClientWithDaa(void)
         goto cleanup;
     }
 
-    // Enable DAA cert usage when x509 is invoked
+    // Enable DAA cert usage when X509 is invoked
     if (IoTHubDeviceClient_LL_SetOption(iothubClientHandle, "SetDeviceId",
         &deviceIdForDaaCertUsage) != IOTHUB_CLIENT_OK) {
         Log_Debug("ERROR: Failure setting Azure IoT Hub client option \"SetDeviceId\".\n");
@@ -736,12 +547,8 @@ cleanup:
     return retVal;
 }
 
-/// <summary>
-///     Sets up the Azure IoT Hub connection (creates the iothubClientHandle)
-///     with DPS
-/// </summary>
-static bool SetUpAzureIoTHubClientWithDps(void)
-{
+// Set up the Azure IoT Hub connection (creating the iothubClientHandle) with DPS
+static bool SetUpAzureIoTHubClientWithDps(void) {
     AZURE_SPHERE_PROV_RETURN_VALUE provResult =
         IoTHubDeviceClient_LL_CreateWithAzureSphereDeviceAuthProvisioning(scopeId, 10000,
             &iothubClientHandle);
@@ -755,50 +562,8 @@ static bool SetUpAzureIoTHubClientWithDps(void)
     return true;
 }
 
-/// <summary>
-///     Callback invoked when a Direct Method is received from Azure IoT Hub.
-/// </summary>
-static int DeviceMethodCallback(const char* methodName, const unsigned char* payload,
-    size_t payloadSize, unsigned char** response, size_t* responseSize,
-    void* userContextCallback)
-{
-    int result;
-    char* responseString;
 
-    Log_Debug("Received Device Method callback: Method name %s.\n", methodName);
-
-    if (strcmp("TriggerAlarm", methodName) == 0) {
-        // Output alarm using Log_Debug
-        Log_Debug("  ----- ALARM TRIGGERED! -----\n");
-        responseString = "\"Alarm Triggered\""; // must be a JSON string (in quotes)
-        result = 200;
-    }
-    else if (strcmp("InjectInsulin", methodName) == 0) {
-        // Output insulin injection using log debug
-        int intPayload = atoi(payload);
-        Log_Debug("Injecting %d mg insulin\n", intPayload);
-        responseString = "\"Injecting insulin\""; // must be a JSON string (in quotes)
-
-        GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_High);
-        CreateEventLoopDisarmedTimer(insulinToInject, InsulinTimerEventHandler);
-        SetEventLoopTimerOneShot(insulinToInject, intPayload);
-    }
-    else {
-        // All other method names are ignored
-        responseString = "{}";
-        result = -1;
-    }
-
-    // if 'response' is non-NULL, the Azure IoT library frees it after use, so copy it to heap
-    *responseSize = strlen(responseString);
-    *response = malloc(*responseSize);
-    memcpy(*response, responseString, *responseSize);
-    return result;
-}
-
-/// <summary>
-///     Callback invoked when a Device Twin update is received from Azure IoT Hub.
-/// </summary>
+// Callback invoked when a Device Twin update is received from Azure IoT Hub.
 static void DeviceTwinCallback(DEVICE_TWIN_UPDATE_STATE updateState, const unsigned char* payload,
     size_t payloadSize, void* userContextCallback)
 {
@@ -887,9 +652,7 @@ static const char* GetReasonString(IOTHUB_CLIENT_CONNECTION_STATUS_REASON reason
     return reasonString;
 }
 
-/// <summary>
-///     Converts AZURE_SPHERE_PROV_RETURN_VALUE to a string.
-/// </summary>
+// Convert AZURE_SPHERE_PROV_RETURN_VALUE to a string.
 static const char* GetAzureSphereProvisioningResultString(
     AZURE_SPHERE_PROV_RETURN_VALUE provisioningResult)
 {
@@ -911,11 +674,8 @@ static const char* GetAzureSphereProvisioningResultString(
     }
 }
 
-/// <summary>
-///     Check the network status.
-/// </summary>
-static bool IsConnectionReadyToSendTelemetry(void)
-{
+// Check the network status.
+static bool IsConnectionReadyToSendTelemetry(void) {
     Networking_InterfaceConnectionStatus status;
     if (Networking_GetInterfaceConnectionStatus(networkInterface, &status) != 0) {
         if (errno != EAGAIN) {
@@ -940,11 +700,8 @@ static bool IsConnectionReadyToSendTelemetry(void)
     return true;
 }
 
-/// <summary>
-///     Sends telemetry to Azure IoT Hub
-/// </summary>
-static void SendTelemetry(const char* jsonMessage)
-{
+// Send telemetry to Azure IoT Hub
+static void SendTelemetry(const char* jsonMessage) {
     if (iotHubClientAuthenticationState != IoTHubClientAuthenticationState_Authenticated) {
         // AzureIoT client is not authenticated. Log a warning and return.
         Log_Debug("WARNING: Azure IoT Hub is not authenticated. Not sending telemetry.\n");
@@ -976,20 +733,14 @@ static void SendTelemetry(const char* jsonMessage)
     IoTHubMessage_Destroy(messageHandle);
 }
 
-/// <summary>
-///     Callback invoked when the Azure IoT Hub send event request is processed.
-/// </summary>
-static void SendEventCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, void* context)
-{
+// Callback invoked when the Azure IoT Hub send event request is processed.
+static void SendEventCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, void* context) {
     Log_Debug("INFO: Azure IoT Hub send telemetry event callback: status code %d.\n", result);
 }
 
-/// <summary>
-///     Enqueues a report containing Device Twin reported properties. The report is not sent
-///     immediately, but it is sent on the next invocation of IoTHubDeviceClient_LL_DoWork().
-/// </summary>
-static void TwinReportState(const char* jsonState)
-{
+// Enqueue a report containing Device Twin reported properties. The report is not sent
+// immediately, but it is sent on the next invocation of IoTHubDeviceClient_LL_DoWork().
+static void TwinReportState(const char* jsonState) {
     if (iothubClientHandle == NULL) {
         Log_Debug("ERROR: Azure IoT Hub client not initialized.\n");
     }
@@ -1006,42 +757,14 @@ static void TwinReportState(const char* jsonState)
     }
 }
 
-/// <summary>
-///     Callback invoked when the Device Twin report state request is processed by Azure IoT Hub
-///     client.
-/// </summary>
-static void ReportedStateCallback(int result, void* context)
-{
+// Callback invoked when the Device Twin report state request is processed by Azure IoT Hub
+// client.
+static void ReportedStateCallback(int result, void* context) {
     Log_Debug("INFO: Azure IoT Hub Device Twin reported state callback: status code %d.\n", result);
 }
 
-/// <summary>
-///     Generate simulated telemetry and send to Azure IoT Hub.
-/// </summary>
-void SendSimulatedTelemetry(void)
-{
-    static char telemetryBuffer[TELEMETRY_BUFFER_SIZE];
-    static float glucose_level = 0;
-
-    Log_Debug("Read glucose value: %.3f mg/dL\n", voltage);
-
-    int len =
-        snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Glucose\":%3.2f}", voltage);
-    if (len < 0 || len >= TELEMETRY_BUFFER_SIZE) {
-        Log_Debug("ERROR: Cannot write telemetry to buffer.\n");
-        return;
-    }
-    SendTelemetry(telemetryBuffer);
-}
-
-/// <summary>
-///     Check whether a given button has just been pressed.
-/// </summary>
-/// <param name="fd">The button file descriptor</param>
-/// <param name="oldState">Old state of the button (pressed or released)</param>
-/// <returns>true if pressed, false otherwise</returns>
-static bool IsButtonPressed(int fd, GPIO_Value_Type* oldState)
-{
+// Check whether a given button has just been pressed.
+static bool IsButtonPressed(int fd, GPIO_Value_Type* oldState) {
     bool isButtonPressed = false;
     GPIO_Value_Type newState;
     int result = GPIO_GetValue(fd, &newState);
@@ -1058,14 +781,11 @@ static bool IsButtonPressed(int fd, GPIO_Value_Type* oldState)
     return isButtonPressed;
 }
 
-/// <summary>
-///     Read the certificate file and provide a null terminated string containing the certificate.
-///     The function logs an error and returns an error code if it cannot allocate enough memory to
-///     hold the certificate content.
-/// </summary>
-/// <returns>ExitCode_Success on success, any other exit code on error</returns>
-static ExitCode ReadIoTEdgeCaCertContent(void)
-{
+// Read the certificate file and provide a null-terminated string containing the certificate.
+// The function logs an error and returns an error code if it cannot allocate enough memory to
+// hold the certificate content. Returns ExitCode_Success on success, otherwise returns another
+// ExitCode indicating the specific error.
+static ExitCode ReadIoTEdgeCaCertContent(void) {
     int certFd = -1;
     off_t fileSize = 0;
 
@@ -1119,11 +839,7 @@ static ExitCode ReadIoTEdgeCaCertContent(void)
     return ExitCode_Success;
 }
 
-/// <summary>
-///     Main entry point for this sample.
-/// </summary>
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
     Log_Debug("Gluck IoT device started.\n");
 
     bool isNetworkingReady = false;
@@ -1145,6 +861,7 @@ int main(int argc, char* argv[])
         }
     }
 
+    SendSimulatedTelemetry();
     exitCode = InitPeripheralsAndHandlers();
 
     // Main loop
