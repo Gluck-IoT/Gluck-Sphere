@@ -5,7 +5,9 @@
   "EntryPoint": "/bin/app",
   "CmdArgs": [ "--ConnectionType", "DPS", "--ScopeID", "0ne0021B284" ],
   "Capabilities": {
+    "Adc": [ "$SAMPLE_POTENTIOMETER_ADC_CONTROLLER" ],
     "AllowedConnections": [ "global.azure-devices-provisioning.net", "iotc-ee263fb0-2201-4129-8784-00b767bbcf04.azure-devices.net", "iotc-5671b441-f030-46ab-8a0c-2e99ea100aa8.azure-devices.net", "iotc-fe80882a-72d9-4d27-84d2-ec970f3ce670.azure-devices.net", "iotc-a0742369-a0ac-4451-87d8-719b1b7fd291.azure-devices.net", "iotc-dcbd21ab-27f9-4296-ad9a-4faebae7d008.azure-devices.net", "iotc-7422ca3f-c395-4736-b74f-c5d67bd0de04.azure-devices.net", "iotc-d73824a6-53f2-4be4-a08c-ae82137e66ed.azure-devices.net", "iotc-ec2bbe41-c0a3-4d97-b3f2-b9b9a9682f9d.azure-devices.net", "iotc-67e8c7dd-b5ec-4edb-9603-fd6d4fe6e908.azure-devices.net", "iotc-68f5e07b-cddd-4880-af9a-d1ecc6e9ed0c.azure-devices.net" ],
+    "DeviceAuthentication": "8c44d1ff-3356-4cfc-9a61-b72a72846a8b",
     "Gpio": [
       "$SAMPLE_BUTTON_1",
       "$SAMPLE_BUTTON_2",
