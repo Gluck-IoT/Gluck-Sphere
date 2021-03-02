@@ -13,11 +13,20 @@ More information about Azure Sphere can be found [here](https://docs.microsoft.c
 ## Functionality
 This app performs the following tasks:
 
-- Receive sensor data from Azure RTOS, and transmit it to Azure Sphere (where it can be processed by an IoT server) every 5 seconds
-
-- Receive command data from Azure Sphere, and transmit it to the
+- Connect to Azure IoT Hub and handle certificates and authentication
+- Poll the ADC (which would be connected to a glucose lancet, allowing it to read blood glucose levels) and transmit readings to IoT Hub
+- Receive commands from IoT Hub; namely, when glucose levels become too low, turn on a water pump (which in real life would be an insulin pump) to restore glucose levels to normal
 
 ## Capabilities
 This app uses the following capabilities:
 
-- ?
+- **ADC:** Required to read glucose levels
+- **Connections:** Required to be able to connect to IoT Hub
+- **GPIO:** Used to power certain LEDs/buttons for testing purposes
+- **UART:** Used to power the water pump
+- **System event notifications:** Used for debugging
+- **Mutable storage:** 8KB provided
+- **Wi-Fi config:** Used to allow the Azure Sphere board to connect via Wi-Fi
+
+## Contributing
+After 17 March 2021, all pull requests are welcome.
