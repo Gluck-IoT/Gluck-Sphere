@@ -45,7 +45,7 @@ This app uses the following capabilities:
 - **Wi-Fi config:** Used to allow the Azure Sphere board to connect via Wi-Fi
 
 ## Licensing
-See LICENSE.md for details.
+All code in this repository is licensed under the MIT License. See [LICENSE.md](LICENSE.md "LICENSE.md") for details.
 
 ## Contributing
 After 17 March 2021, all pull requests are welcome.
