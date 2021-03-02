@@ -1,5 +1,10 @@
 /* Copyright (c) Group Romeo 2021. All rights reserved.
-   Licensed under the MIT License. */
+   Licensed under the MIT License.
+   
+   Some functions in this file have been written by Microsoft.
+   They are Copyright (c) Microsoft Corporation, and are also
+   licensed under the MIT License. This program is based on
+   the Azure IoT sample: see README.md for details. */
 
 #include <ctype.h>
 #include <errno.h>

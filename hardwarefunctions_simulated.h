@@ -1,3 +1,6 @@
+/* Copyright (c) Group Romeo 2021. All rights reserved.
+   Licensed under the MIT License. */
+
 static void TerminationHandler(int signalNumber);
 
 int main(int argc, char* argv[]) {

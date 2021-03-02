@@ -1,3 +1,6 @@
+/* Copyright (c) Group Romeo 2021. All rights reserved.
+   Licensed under the MIT License. */
+
 #define PumpOutputPin SAMPLE_NRF52_UART
 
 static void TerminationHandler(int signalNumber);
