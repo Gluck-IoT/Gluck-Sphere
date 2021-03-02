@@ -466,7 +466,7 @@ static bool SetUpAzureIoTHubClientWithDaa(void) {
         goto cleanup;
     }
 
-    // Enable DAA cert usage when x509 is invoked
+    // Enable DAA cert usage when X509 is invoked
     if (IoTHubDeviceClient_LL_SetOption(iothubClientHandle, "SetDeviceId",
         &deviceIdForDaaCertUsage) != IOTHUB_CLIENT_OK) {
         Log_Debug("ERROR: Failure setting Azure IoT Hub client option \"SetDeviceId\".\n");
