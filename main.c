@@ -204,15 +204,13 @@ static const char* cmdLineArgsUsageText =
 "\"certs/<iotedgedevice_cert_name>\"]\n";
 
 // Signal handler for termination requests. This handler must be async-signal-safe.
-static void TerminationHandler(int signalNumber)
-{
+static void TerminationHandler(int signalNumber) {
     // Don't use Log_Debug here, as it is not guaranteed to be async-signal-safe.
     exitCode = ExitCode_TermHandler_SigTerm;
 }
 
 // Button timer event: Check the status of the button.
-static void ButtonPollTimerEventHandler(EventLoopTimer* timer)
-{
+static void ButtonPollTimerEventHandler(EventLoopTimer* timer) {
     if (ConsumeEventLoopTimerEvent(timer) != 0) {
         exitCode = ExitCode_ButtonTimer_Consume;
         return;
@@ -224,8 +222,7 @@ static void ButtonPollTimerEventHandler(EventLoopTimer* timer)
 }
 
 // Azure timer event:  Check connection status and send telemetry
-static void AzureTimerEventHandler(EventLoopTimer* timer)
-{
+static void AzureTimerEventHandler(EventLoopTimer* timer) {
     if (ConsumeEventLoopTimerEvent(timer) != 0) {
         exitCode = ExitCode_AzureTimer_Consume;
         return;
@@ -313,8 +310,7 @@ static void ParseCommandLineArguments(int argc, char* argv[]) {
 // Validate if the values of the Connection type, Scope ID, IoT Hub or IoT Edge Hostname
 // were set. Returns ExitCode_Success if the parameters were provided, or another ExitCode
 // value which indicates the specific failure.
-static ExitCode ValidateUserConfiguration(void)
-{
+static ExitCode ValidateUserConfiguration(void) {
     ExitCode validationExitCode = ExitCode_Success;
 
     if (connectionType < ConnectionType_DPS || connectionType > ConnectionType_IoTEdge) {
@@ -365,8 +361,7 @@ static ExitCode ValidateUserConfiguration(void)
 
 
 // Close a file descriptor and print an error on failure.
-static void CloseFdAndPrintError(int fd, const char* fdName)
-{
+static void CloseFdAndPrintError(int fd, const char* fdName) {
     if (fd >= 0) {
         int result = close(fd);
         if (result != 0) {
@@ -508,8 +503,7 @@ cleanup:
 }
 
 // Set up the Azure IoT Hub connection (creating the iothubClientHandle) with DPS.
-static bool SetUpAzureIoTHubClientWithDps(void)
-{
+static bool SetUpAzureIoTHubClientWithDps(void) {
     AZURE_SPHERE_PROV_RETURN_VALUE provResult =
         IoTHubDeviceClient_LL_CreateWithAzureSphereDeviceAuthProvisioning(scopeId, 10000,
             &iothubClientHandle);
@@ -632,8 +626,7 @@ static const char* GetAzureSphereProvisioningResultString(
 }
 
 // Check the network status.
-static bool IsConnectionReadyToSendTelemetry(void)
-{
+static bool IsConnectionReadyToSendTelemetry(void) {
     Networking_InterfaceConnectionStatus status;
     if (Networking_GetInterfaceConnectionStatus(networkInterface, &status) != 0) {
         if (errno != EAGAIN) {
@@ -659,8 +652,7 @@ static bool IsConnectionReadyToSendTelemetry(void)
 }
 
 // Send telemetry to Azure IoT Hub.
-static void SendTelemetry(const char* jsonMessage)
-{
+static void SendTelemetry(const char* jsonMessage) {
     if (iotHubClientAuthenticationState != IoTHubClientAuthenticationState_Authenticated) {
         // AzureIoT client is not authenticated. Log a warning and return.
         Log_Debug("WARNING: Azure IoT Hub is not authenticated. Not sending telemetry.\n");
@@ -700,8 +692,7 @@ static void SendEventCallback(IOTHUB_CLIENT_CONFIRMATION_RESULT result, void* co
 
 // Enqueue a report containing Device Twin reported properties. The report is not sent
 // immediately, but it is sent on the next invocation of IoTHubDeviceClient_LL_DoWork().
-static void TwinReportState(const char* jsonState)
-{
+static void TwinReportState(const char* jsonState) {
     if (iothubClientHandle == NULL) {
         Log_Debug("ERROR: Azure IoT Hub client not initialized.\n");
     }
@@ -720,8 +711,7 @@ static void TwinReportState(const char* jsonState)
 
 // Callback invoked when the Device Twin report state request is processed by Azure IoT Hub
 // client.
-static void ReportedStateCallback(int result, void* context)
-{
+static void ReportedStateCallback(int result, void* context) {
     Log_Debug("INFO: Azure IoT Hub Device Twin reported state callback: status code %d.\n", result);
 }
 
@@ -747,8 +737,7 @@ static bool IsButtonPressed(int fd, GPIO_Value_Type* oldState) {
 // The function logs an error and returns an error code if it cannot allocate enough memory to
 // hold the certificate content. Returns ExitCode_Success on success, otherwise returns another
 // ExitCode indicating the specific error.
-static ExitCode ReadIoTEdgeCaCertContent(void)
-{
+static ExitCode ReadIoTEdgeCaCertContent(void) {
     int certFd = -1;
     off_t fileSize = 0;
 
