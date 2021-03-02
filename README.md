@@ -44,5 +44,8 @@ This app uses the following capabilities:
 - **Mutable storage:** 8KB provided
 - **Wi-Fi config:** Used to allow the Azure Sphere board to connect via Wi-Fi
 
+## Licensing
+See LICENSE.md for details. This project is based on the Azure IoT sample. For the avoidance of doubt, the following functions are re-used from the sample: *SendEventCallback; DeviceTwinCallback; TwinReportState; ReportedStateCallback; DeviceMethodCallback; GetReasonString; GetAzureSphereProvisioningResultString; SetUpAzureIoTHubClient; ButtonPollTimerEventHandler; IsButtonPressed; ValidateUserConfiguration; ParseCommandLineArguments; SetUpAzureIoTHubClientWithDaa; SetUpAzureIoTHubClientWithDps; IsConnectionReadyToSendTelemetry; ReadIoTEdgeCaCertContent*
+
 ## Contributing
 After 17 March 2021, all pull requests are welcome.
