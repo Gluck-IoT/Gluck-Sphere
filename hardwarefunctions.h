@@ -1,163 +1,47 @@
-// This sample C application demonstrates how to interface Azure Sphere devices with Azure IoT
-// services. Using the Azure IoT SDK C APIs, it shows how to:
-// 1. Use Device Provisioning Service (DPS) to connect to Azure IoT Hub/Central with
-// certificate-based authentication
-// 2. Use X.509 Certificate Authority (CA) certificates to authenticate devices connecting directly
-// to Azure IoT Hub
-// 3. Use X.509 Certificate Authority (CA) certificates to authenticate devices connecting to an
-// IoT Edge device.
-// 4. Use Azure IoT Hub messaging to upload simulated temperature measurements and to signal button
-// press events
-// 5. Use Device Twin to receive desired LED state from the Azure IoT Hub
-// 6. Use Direct Methods to receive a "Trigger Alarm" command from Azure IoT Hub/Central
-//
-// It uses the following Azure Sphere libraries:
-// - eventloop (system invokes handlers for timer events)
-// - gpio (digital input for button, digital output for LED)
-// - log (displays messages in the Device Output window during debugging)
-// - networking (network interface connection status)
-// - storage (device storage interaction)
-//
-// You will need to provide information in the 'CmdArgs' section of the application manifest to
-// use this application. Please see README.md for full details.
-
-#define HWFUNCTIONS
-
-#include <ctype.h>
-#include <errno.h>
-#include <getopt.h>
-#include <signal.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-
-#include "applibs_versions.h"
-#include <applibs/eventloop.h>
-#include <applibs/adc.h>
-#include <applibs/gpio.h>
-#include <applibs/log.h>
-#include <applibs/networking.h>
-#include <applibs/storage.h>
-
-static void TerminationHandler(int signalNumber);
-
-// The following #include imports a "sample appliance" definition. This app comes with multiple
-// implementations of the sample appliance, each in a separate directory, which allow the code to
-// run on different hardware.
-//
-// By default, this app targets hardware that follows the MT3620 Reference Development Board (RDB)
-// specification, such as the MT3620 Dev Kit from Seeed Studio.
-//
-// To target different hardware, you'll need to update CMakeLists.txt. For example, to target the
-// Avnet MT3620 Starter Kit, change the TARGET_HARDWARE variable to
-// "avnet_mt3620_sk".
-//
-// See https://aka.ms/AzureSphereHardwareDefinitions for more details.
-#include <hw/sample_appliance.h>
-
-#include "eventloop_timer_utilities.h"
-#include "parson.h" // Used to parse Device Twin messages.
-
-// Azure IoT SDK
-#include <iothub_client_core_common.h>
-#include <iothub_device_client_ll.h>
-#include <iothub_client_options.h>
-#include <iothubtransportmqtt.h>
-#include <iothub.h>
-#include <azure_sphere_provisioning.h>
-#include <iothub_security_factory.h>
-#include <shared_util_options.h>
-
 #define PumpOutputPin SAMPLE_NRF52_UART
 
-// Insulin timer event: stop injecting insulin after enough has been injected.
-static void InsulinTimerEventHandler(EventLoopTimer* timer) {
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_AzureTimer_Consume;
-        return;
+static void TerminationHandler(int signalNumber);
+static int adcControllerFd = -1;
+static EventLoopTimer* insulinToInject = NULL;
+
+int main(int argc, char* argv[]) {
+    Log_Debug("Azure IoT Application starting.\n");
+
+    bool isNetworkingReady = false;
+    if ((Networking_IsNetworkingReady(&isNetworkingReady) == -1) || !isNetworkingReady) {
+        Log_Debug("WARNING: Network is not ready. Device cannot connect until network is ready.\n");
     }
 
-    // Switch off the pump after it has injected enough insulin
-    GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_Low);
-    return;
-}
+    ParseCommandLineArguments(argc, argv);
 
-// Take a reading from the ADC (a glucose reading) every second and
-// output the result.
-static void AdcPollingEventHandler(EventLoopTimer* timer) {
-    if (ConsumeEventLoopTimerEvent(timer) != 0) {
-        exitCode = ExitCode_AdcTimerHandler_Consume;
-        return;
+    exitCode = ValidateUserConfiguration();
+    if (exitCode != ExitCode_Success) {
+        return exitCode;
     }
 
-    uint32_t value;
-    int result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
-    if (result == -1) {
-        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
-        exitCode = ExitCode_AdcTimerHandler_Poll;
-        return;
+    if (connectionType == ConnectionType_IoTEdge) {
+        exitCode = ReadIoTEdgeCaCertContent();
+        if (exitCode != ExitCode_Success) {
+            return exitCode;
+        }
     }
 
-    voltage = ((float)value * sampleMaxVoltage) / (float)((1 << sampleBitCount) - 1);
-}
+    exitCode = InitPeripheralsAndHandlers();
 
-// Callback invoked when a Direct Method is received from Azure IoT Hub.
-static int DeviceMethodCallback(const char* methodName, const unsigned char* payload,
-    size_t payloadSize, unsigned char** response, size_t* responseSize,
-    void* userContextCallback)
-{
-    int result;
-    char* responseString;
-
-    Log_Debug("Received Device Method callback: Method name %s.\n", methodName);
-
-    if (strcmp("TriggerAlarm", methodName) == 0) {
-        // Output alarm using Log_Debug
-        Log_Debug("Alarm triggered!\n");
-        responseString = "\"Alarm Triggered\""; // must be a JSON string (in quotes)
-        result = 200;
-    }
-    else if (strcmp("InjectInsulin", methodName) == 0) {
-        // Output insulin injection using log debug
-        int intPayload = atoi(payload);
-        Log_Debug("Injecting %d mg insulin\n", intPayload);
-        responseString = "\"Injecting insulin\""; // must be a JSON string (in quotes)
-
-        // Inject the specified amount of insulin
-        GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_High);
-        CreateEventLoopDisarmedTimer(insulinToInject, InsulinTimerEventHandler);
-        SetEventLoopTimerOneShot(insulinToInject, intPayload);
-    }
-    else {
-        // Ignore all other method names
-        responseString = "{}";
-        result = -1;
+    // Main loop
+    while (exitCode == ExitCode_Success) {
+        EventLoop_Run_Result result = EventLoop_Run(eventLoop, -1, true);
+        // Continue if interrupted by signal, e.g. due to breakpoint being set.
+        if (result == EventLoop_Run_Failed && errno != EINTR) {
+            exitCode = ExitCode_Main_EventLoopFail;
+        }
     }
 
-    // if 'response' is non-NULL, the Azure IoT library frees it after use, so copy it to heap
-    *responseSize = strlen(responseString);
-    *response = malloc(*responseSize);
-    memcpy(*response, responseString, *responseSize);
-    return result;
-}
+    ClosePeripheralsAndHandlers();
 
-/// <summary>
-/// Send telemetry to Azure IoT Hub.
-void SendSimulatedTelemetry(void) {
-    static char telemetryBuffer[TELEMETRY_BUFFER_SIZE];
-    static float glucose_level = 0;
+    Log_Debug("Application exiting.\n");
 
-    Log_Debug("Read glucose value: %.3f mg/dL\n", voltage);
-
-    int len =
-        snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Glucose\":%3.2f}", voltage);
-    if (len < 0 || len >= TELEMETRY_BUFFER_SIZE) {
-        Log_Debug("ERROR: Cannot write telemetry to buffer.\n");
-        return;
-    }
-    SendTelemetry(telemetryBuffer);
+    return exitCode;
 }
 
 // Set up SIGTERM termination handler, initialize peripherals, and set up event handlers.
@@ -181,15 +65,6 @@ static ExitCode InitPeripheralsAndHandlers(void) {
     if (sendMessageButtonGpioFd == -1) {
         Log_Debug("ERROR: Could not open SAMPLE_BUTTON_1: %s (%d).\n", strerror(errno), errno);
         return ExitCode_Init_MessageButton;
-    }
-
-    // Open the pins which will be used for the insulin pump
-    Log_Debug("Opening pin for insulin pump as output.\n");
-    deviceStatusPumpGpioFd =
-        GPIO_OpenAsOutput(PumpOutputPin, GPIO_OutputMode_OpenSource, GPIO_Value_Low);
-    if (deviceStatusPumpGpioFd == -1) {
-        Log_Debug("ERROR: Could not open SAMPLE_LED: %s (%d).\n", strerror(errno), errno);
-        return ExitCode_Init_TwinStatusLed;
     }
 
     // SAMPLE_LED is used to show Device Twin settings state
@@ -226,14 +101,16 @@ static ExitCode InitPeripheralsAndHandlers(void) {
         return ExitCode_Init_SetRefVoltage;
     }
 
-    struct timespec adcCheckPeriod = { .tv_sec = 1, .tv_nsec = 0 };
-    adcPollTimer =
-        CreateEventLoopPeriodicTimer(eventLoop, &AdcPollingEventHandler, &adcCheckPeriod);
-    if (adcPollTimer == NULL) {
-        return ExitCode_Init_AdcPollTimer;
+    // Open the pins which will be used for the insulin pump
+    Log_Debug("Opening pin for insulin pump as output.\n");
+    deviceStatusPumpGpioFd =
+        GPIO_OpenAsOutput(PumpOutputPin, GPIO_OutputMode_OpenSource, GPIO_Value_Low);
+    if (deviceStatusPumpGpioFd == -1) {
+        Log_Debug("ERROR: Could not open SAMPLE_LED: %s (%d).\n", strerror(errno), errno);
+        return ExitCode_Init_TwinStatusLed;
     }
 
-    // Set up poll timers
+    // Set up a timer to poll for button events.
     static const struct timespec buttonPressCheckPeriod = { .tv_sec = 0, .tv_nsec = 1000 * 1000 };
     buttonPollTimer = CreateEventLoopPeriodicTimer(eventLoop, &ButtonPollTimerEventHandler,
         &buttonPressCheckPeriod);
@@ -250,4 +127,99 @@ static ExitCode InitPeripheralsAndHandlers(void) {
     }
 
     return ExitCode_Success;
+}
+
+// Close peripherals and event handlers.
+static void ClosePeripheralsAndHandlers(void) {
+    DisposeEventLoopTimer(buttonPollTimer);
+    DisposeEventLoopTimer(azureTimer);
+    DisposeEventLoopTimer(insulinToInject);
+    EventLoop_Close(eventLoop);
+
+    Log_Debug("Closing file descriptors\n");
+
+    // Leave the LEDs off
+    if (deviceTwinStatusLedGpioFd >= 0) {
+        GPIO_SetValue(deviceTwinStatusLedGpioFd, GPIO_Value_High);
+    }
+
+    CloseFdAndPrintError(sendMessageButtonGpioFd, "SendMessageButton");
+    CloseFdAndPrintError(deviceTwinStatusLedGpioFd, "StatusLed");
+    CloseFdAndPrintError(adcControllerFd, "ADC");
+    CloseFdAndPrintError(deviceStatusPumpGpioFd, "Pump");
+}
+
+// Send telemetry to Azure IoT Hub.
+void SendSimulatedTelemetry(void) {
+    static char telemetryBuffer[TELEMETRY_BUFFER_SIZE];
+
+    uint32_t value;
+    int result = ADC_Poll(adcControllerFd, SAMPLE_POTENTIOMETER_ADC_CHANNEL, &value);
+    if (result == -1) {
+        Log_Debug("ADC_Poll failed with error: %s (%d)\n", strerror(errno), errno);
+        exitCode = ExitCode_AdcTimerHandler_Poll;
+        return;
+    }
+
+    int len =
+        snprintf(telemetryBuffer, TELEMETRY_BUFFER_SIZE, "{\"Glucose\":%3.2f}", voltage);
+    if (len < 0 || len >= TELEMETRY_BUFFER_SIZE) {
+        Log_Debug("ERROR: Cannot write telemetry to buffer.\n");
+        return;
+    }
+    SendTelemetry(telemetryBuffer);
+}
+
+// Callback invoked when a Direct Method is received from Azure IoT Hub.
+static int DeviceMethodCallback(const char* methodName, const unsigned char* payload,
+    size_t payloadSize, unsigned char** response, size_t* responseSize,
+    void* userContextCallback)
+{
+    int result;
+    char* responseString;
+
+    Log_Debug("Received Device Method callback: Method name %s.\n", methodName);
+
+    if (strcmp("TriggerAlarm", methodName) == 0) {
+        // Output alarm using Log_Debug
+        Log_Debug("Alarm triggered!\n");
+        responseString = "\"Alarm Triggered\""; // must be a JSON string (in quotes)
+        result = 200;
+    }
+    else if (strcmp("InjectInsulin", methodName) == 0) {
+        // Output insulin injection using log debug
+        int intPayload = atoi(payload);
+        Log_Debug("Injecting %d mg insulin\n", intPayload);
+        responseString = "\"Injecting insulin\""; // must be a JSON string (in quotes
+
+        // Inject the specified amount of insulin
+        GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_High);
+        CreateEventLoopDisarmedTimer(insulinToInject, InsulinTimerEventHandler);
+        SetEventLoopTimerOneShot(insulinToInject, intPayload);
+
+        result = 100;
+    }
+    else {
+        // All other method names are ignored
+        responseString = "{}";
+        result = -1;
+    }
+
+    // if 'response' is non-NULL, the Azure IoT library frees it after use, so copy it to heap
+    *responseSize = strlen(responseString);
+    *response = malloc(*responseSize);
+    memcpy(*response, responseString, *responseSize);
+    return result;
+}
+
+// Insulin timer event: stop injecting insulin after enough has been injected.
+static void InsulinTimerEventHandler(EventLoopTimer* timer) {
+    if (ConsumeEventLoopTimerEvent(timer) != 0) {
+        exitCode = ExitCode_AzureTimer_Consume;
+        return;
+    }
+
+    // Switch off the pump after it has injected enough insulin
+    GPIO_SetValue(deviceStatusPumpGpioFd, GPIO_Value_Low);
+    return;
 }
