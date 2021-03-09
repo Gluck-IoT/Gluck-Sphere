@@ -190,7 +190,7 @@ static int sampleBitCount = -1;
 // The maximum voltage
 static float sampleMaxVoltage = 2.5f;
 
-// Include different functions depending on whether the hardware is simulated
+// Include different functions depending on whether the hardware is simulated.
 #define SIMULATED 1
 #if SIMULATED == 1
 #include "hardwarefunctions_simulated.h"
@@ -226,7 +226,7 @@ static void ButtonPollTimerEventHandler(EventLoopTimer* timer) {
     }
 }
 
-// Azure timer event:  Check connection status and send telemetry
+// Azure timer event:  Check connection status and send telemetry.
 static void AzureTimerEventHandler(EventLoopTimer* timer) {
     if (ConsumeEventLoopTimerEvent(timer) != 0) {
         exitCode = ExitCode_AzureTimer_Consume;
