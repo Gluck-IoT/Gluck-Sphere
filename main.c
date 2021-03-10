@@ -171,7 +171,7 @@ static EventLoopTimer* azureTimer = NULL;
 
 // Azure IoT poll periods
 static const int AzureIoTDefaultPollPeriodSeconds = 1;        // poll azure iot every second
-static const int AzureIoTPollPeriodsPerTelemetry = 300;       // only send telemetry every 5 minutes
+static const int AzureIoTPollPeriodsPerTelemetry = 5;        // only send telemetry once every 5 seconds
 static const int AzureIoTMinReconnectPeriodSeconds = 60;      // back off when reconnecting
 static const int AzureIoTMaxReconnectPeriodSeconds = 10 * 60; // back off limit
 
